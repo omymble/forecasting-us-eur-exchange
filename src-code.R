@@ -22,6 +22,7 @@ euir <- read.csv(euir_file)
 uscpi <- read.csv(uscpi_file)
 eucpi <- read.csv(eucpi_file)
 
+### Looking at share price
 shares$DATE <- as.Date(shares$DATE)
 
 # plot(shares$DATE, shares$SPASTT01USM661N, xlab = "Time", ylab = "Price")
@@ -40,8 +41,29 @@ plotly_gg <- ggplotly(gg)
 
 plotly_gg
 
-### There is a clear increasing trend 
+### There is a clear increasing trend that is confirmed by the ACF being the highest
+### at the smaller lags
+ggAcf(shares$SPASTT01USM661N, lag = 760)
 
-acf(shares)
+### Attempting modeling share prices with Naive Method
+nmshares_model <- meanf(shares$SPASTT01USM661N, h = 1)
+plot(nmshares_model)
+
+## Checking residuals
+nmshares_res <- residuals(nmshares_model)
+autoplot(ts(nmshares_res)) + xlab("Month") + ylab("") +
+  ggtitle("Residuals from Naive Method")
+gg_hist <- gghistogram(nmshares_res) + ggtitle("Histogram of Naive Method Residuals")
+ggplotly(gg_hist)
+
+ggAcf(nmshares_res, lag = 760)
+
+### Attempting modeling share prices with linear regression model
+shares_lm = lm(shares$SPASTT01USM661N~ shares$DATE)
+summary(shares_lm) ###R^2 value of 83.96%
+
+tt <- 1:NROW(shares)
+plot(tt, shares$SPASTT01USM661N, xlab="Time", ylab="Index 2015 = 100", type = "p")
+abline(shares_lm)
 
 
