@@ -40,5 +40,8 @@ plotly_gg <- ggplotly(gg)
 
 plotly_gg
 
+### There is a clear increasing trend 
+
+acf(shares)
 
 
