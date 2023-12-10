@@ -1,0 +1,570 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(readxl)
+library(lmtest) 
+library(forecast)
+library(DIMORA)
+library(fpp2)
+library(ggplot2)
+library(plotly)
+library(tseries)
+library(randomForest)
+library(BASS)
+library(Metrics) 
+library(dplyr)
+library(tibble)
+```
+
+
+```{r}
+# folder_path = "~/Desktop/unipd/time-series/project/data/"
+folder_path = "./data/"
+
+# shares_file <- paste0(folder_path, "us-total-share-prices.csv")
+# m2_file <- paste0(folder_path, "us-M2.csv")
+# usir_file <- paste0(folder_path, "us-interest-rate.csv")
+euir_file <- paste0(folder_path, "eu-interest-rate.csv")
+# uscpi_file <- paste0(folder_path, "us-consumer-price-index.csv")
+eucpi_file <- paste0(folder_path, "eu-consumer-price-index.csv")
+rate_file <- paste0(folder_path, "euro-daily-hist_1999_2022.csv")
+  
+
+# shares<- read.csv(shares_file)
+# usm2 <- read.csv(m2_file)
+# usir <- read.csv(usir_file)
+euir <- read.csv(euir_file)
+# uscpi <- read.csv(uscpi_file)
+eucpi <- read.csv(eucpi_file)
+rate <- read.csv(rate_file)
+```
+
+```{r}
+# ### Looking at share price
+# shares$DATE <- as.Date(shares$DATE)
+# 
+# # plot(shares$DATE, shares$SPASTT01USM661N, xlab = "Time", ylab = "Price")
+# gg <- ggplot(shares, aes(x = DATE, y = SPASTT01USM661N))+
+#   geom_line(aes(group = 1), color = "blue", linewidth = 0.5) +
+#   geom_point() +
+#   labs(
+#     title = "Total Share Prices Change with Time",
+#     x = "Time",
+#     y = "Index 2015 = 100"
+#   ) +
+#   scale_x_date(date_labels = "%Y-%m", date_breaks = "1 year") +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+# 
+# plotly_gg <- ggplotly(gg)
+# 
+# plotly_gg
+```
+
+```{r}
+### There is a clear increasing trend that is confirmed by the ACF being the highest
+### at the smaller lags
+# ggAcf(shares$SPASTT01USM661N, lag = 760)
+```
+
+
+```{r}
+### Attempting modeling share prices with Naive Method
+# nmshares_model <- meanf(shares$SPASTT01USM661N, h = 1)
+# plot(nmshares_model)
+```
+
+
+```{r}
+## Checking residuals
+# nmshares_res <- residuals(nmshares_model)
+# autoplot(ts(nmshares_res)) + xlab("Month") + ylab("") +
+#   ggtitle("Residuals from Naive Method")
+# gg_hist <- gghistogram(nmshares_res) + ggtitle("Histogram of Naive Method Residuals")
+# ggplotly(gg_hist)
+```
+
+
+```{r}
+# ggAcf(nmshares_res, lag = 760)
+```
+
+
+```{r}
+### Attempting modeling share prices with linear regression model
+# shares_lm = lm(shares$SPASTT01USM661N~ shares$DATE)
+# summary(shares_lm) ###R^2 value of 83.96%
+```
+
+```{r}
+# tt <- 1:NROW(shares)
+# plot(tt, shares$SPASTT01USM661N, xlab="Time", ylab="Index 2015 = 100", type = "p")
+# abline(shares_lm)
+```
+
+
+```{r}
+head(euir)
+
+euir$DATE <- as.Date(euir$DATE)
+euir_df <- data.frame(date = euir$DATE, interest_rate = euir$IRSTCI01EZM156N)
+```
+
+
+
+```{r}
+summary(euir_df$interest_rate)
+```
+
+
+```{r}
+ggplot(euir_df, aes(x = date, y = interest_rate)) +
+  geom_line() +
+  labs(title = "Euro Interest Rate Over Time",
+       x = "Date", y = "Interest Rate")
+```
+
+
+```{r}
+# Check for Stationarity (Augmented Dickey-Fuller test)
+adf.test(euir_df$interest_rate)
+```
+
+```{r}
+# Autocorrelation and Partial Autocorrelation Plots
+ggtsdisplay(euir_df$interest_rate, lag = 900)
+```
+
+
+```{r}
+ggAcf(euir_df$interest_rate, lag.max = 700)
+```
+
+Linear regression model
+
+```{r}
+train_data <- euir_df[1:(nrow(euir_df) - 3), ]
+test_data <- euir_df[(nrow(euir_df) - 2):nrow(euir_df), ]
+
+model <- lm(interest_rate ~ date, data = train_data)
+
+summary(model)
+
+```
+
+```{r}
+predictions <- predict(model, newdata = test_data)
+residuals <- residuals(model)
+residuals_test <- residuals(model)[1:nrow(test_data)]
+```
+
+```{r}
+rmse_value <- rmse(predictions, test_data$interest_rate)
+mae_value <- mae(predictions, test_data$interest_rate)
+
+cat("RMSE:", rmse_value, "\n")
+cat("MAE:", mae_value, "\n")
+```
+```{r}
+plot(test_data$date, test_data$interest_rate, col = "blue", type = "l", xlab = "Date", ylab = "Interest Rate")
+lines(test_data$date, predictions, col = "red")
+legend("topleft", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
+```
+
+
+```{r}
+# Residuals plot
+plot(test_data$date, residuals_test, col = "green", type = "l", xlab = "Date", ylab = "Residuals")
+
+plot(train_data$date, residuals, col = "green", type = "l", xlab = "Date", ylab = "Residuals train")
+```
+
+
+```{r}
+result_table <- data.frame(
+  Date = test_data$date,
+  Actual = test_data$interest_rate,
+  Predicted = predictions
+)
+
+print(result_table)
+```
+```{r}
+dwtest(model)
+```
+
+-----------------------------------------------------------------------------------------------------
+ARIMA
+
+```{r}
+train_data <- euir_df[1:(nrow(euir_df) - 3), ]
+test_data <- euir_df[(nrow(euir_df) - 2):nrow(euir_df), ]
+
+arima_model <- auto.arima(train_data$interest_rate)
+
+summary(arima_model)
+```
+
+
+```{r}
+# Forecasting for the next 3 months
+arima_forecast <- forecast(arima_model, h = 3)
+print(arima_forecast)
+```
+```{r}
+arima_pred_values <- arima_forecast$mean
+```
+
+
+```{r}
+# Plotting ARIMA Forecast
+plot(arima_forecast, xlab = "Date", ylab = "Interest Rate Forecast")
+```
+```{r}
+# ARIMA residuals
+arima_residuals <- residuals(arima_model)
+plot(train_data$date, arima_residuals, col = "green", type = "l", xlab = "Date", ylab = "ARIMA Residuals")
+```
+```{r}
+forecasted_values <- arima_forecast$mean
+actual_values <- as.numeric(test_data$interest_rate)
+arima_residuals_test <- actual_values - forecasted_values
+```
+
+
+```{r}
+#ARIMA forecasted values and residuals
+arima_table <- data.frame(
+  Date = index(test_data),
+  Actual_Values = actual_values,
+  Forecasted_Interest_Rate = forecasted_values,
+  Residuals = arima_residuals_test
+)
+
+# Print the ARIMA forecast and residuals table
+print(arima_table)
+
+```
+
+
+
+```{r}
+# Plotting ARIMA predicted values and residuals for the test data
+plot(test_data$date, arima_pred_values, col = "blue", type = "l", xlab = "Date", ylab = "ARIMA Predicted Values")
+lines(test_data$date, arima_residuals_test, col = "green")
+legend("topright", legend = c("Predicted Values", "Residuals"), col = c("blue", "green"), lty = 1)
+
+```
+
+
+```{r}
+```
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+```{r}
+head(eucpi)
+
+eucpi$DATE <- as.Date(eucpi$DATE)
+eucpi_df <- data.frame(date = eucpi$DATE, cp_index = eucpi$EA19CPALTT01GYM)
+```
+
+
+```{r}
+summary(eucpi_df$cp_index)
+```
+
+
+```{r}
+ggplot(eucpi_df, aes(x = date, y = cp_index)) +
+  geom_line() +
+  labs(title = "Euro CP Index Over Time",
+       x = "Date", y = "Index Rate")
+```
+
+
+```{r}
+# Check for Stationarity (Augmented Dickey-Fuller test)
+adf.test(eucpi_df$cp_index)
+```
+
+
+```{r}
+# Autocorrelation and Partial Autocorrelation Plots
+ggtsdisplay(eucpi_df$cp_index, lag = 900)
+```
+
+```{r}
+ggAcf(eucpi_df$cp_index, lag.max = 700)
+```
+
+LINEAR REGRESSION
+```{r}
+train_data <- eucpi_df[1:(nrow(eucpi_df) - 3), ]
+test_data <- eucpi_df[(nrow(eucpi_df) - 2):nrow(eucpi_df), ]
+
+model <- lm(cp_index ~ date, data = train_data)
+
+summary(model)
+```
+
+```{r}
+predictions <- predict(model, newdata = test_data)
+residuals <- residuals(model)
+residuals_test <- residuals(model)[1:nrow(test_data)]
+```
+
+
+```{r}
+rmse_value <- rmse(predictions, test_data$cp_index)
+mae_value <- mae(predictions, test_data$cp_index)
+
+cat("RMSE:", rmse_value, "\n")
+cat("MAE:", mae_value, "\n")
+```
+
+
+```{r}
+plot(test_data$date, test_data$cp_index, col = "blue", type = "l", xlab = "Date", ylab = "EU Consumer Price INdex")
+lines(test_data$date, predictions, col = "red")
+legend("topleft", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
+```
+```{r}
+# Residuals plot
+plot(test_data$date, residuals_test, col = "green", type = "l", xlab = "Date", ylab = "Residuals test")
+
+plot(train_data$date, residuals, col = "green", type = "l", xlab = "Date", ylab = "Residuals train")
+```
+```{r}
+result_table <- data.frame(
+  Date = test_data$date,
+  Actual = test_data$cp_index,
+  Predicted = predictions
+)
+
+print(result_table)
+```
+```{r}
+dwtest(model)
+```
+
+ARIMA (CP Index)
+```{r}
+train_data <- eucpi_df[1:(nrow(eucpi_df) - 3), ]
+test_data <- eucpi_df[(nrow(eucpi_df) - 2):nrow(eucpi_df), ]
+
+arima_model <- auto.arima(train_data$cp_index)
+
+summary(arima_model)
+```
+```{r}
+# Forecasting for the next 3 months
+arima_forecast <- forecast(arima_model, h = 3)
+arima_pred_values <- arima_forecast$mean
+print(arima_forecast)
+```
+```{r}
+# Plotting ARIMA Forecast
+plot(arima_forecast, xlab = "Date", ylab = "CP Index Forecast")
+```
+
+
+```{r}
+# ARIMA residuals
+arima_residuals <- residuals(arima_model)
+plot(train_data$date, arima_residuals, col = "green", type = "l", xlab = "Date", ylab = "ARIMA Residuals")
+```
+
+
+```{r}
+forecasted_values <- arima_forecast$mean
+actual_values <- as.numeric(test_data$cp_index)
+arima_residuals_test <- actual_values - forecasted_values
+```
+
+
+```{r}
+#ARIMA forecasted values and residuals
+arima_table <- data.frame(
+  Date = index(test_data),
+  Actual_Values = actual_values,
+  Forecasted_CP_Index = forecasted_values,
+  Residuals = arima_residuals_test
+)
+
+# Print the ARIMA forecast and residuals table
+print(arima_table)
+
+```
+```{r}
+# Plotting ARIMA predicted values and residuals for the test data
+plot(test_data$date, arima_pred_values, col = "blue", type = "l", xlab = "Date", ylab = "ARIMA Predicted Values")
+lines(test_data$date, arima_residuals_test, col = "green")
+legend("topright", legend = c("Predicted Values", "Residuals"), col = c("blue", "green"), lty = 1)
+```
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+US RATE
+```{r}
+rate$Period.Unit. <- as.Date(rate$Period.Unit.)
+rate_df <- data.frame(Date = rate$Period.Unit., US_rate = rate$X.US.dollar..)
+```
+
+```{r}
+rate_df <- rate_df %>% 
+  mutate(Date = format(Date, "%Y-%m"))
+head(rate_df)
+```
+```{r}
+filtered_data <- rate_df %>%
+  group_by(Date) %>%
+  summarize(mean_rate = mean(as.numeric(US_rate)))
+```
+```{r}
+filtered_data$Date <- paste0(filtered_data$Date, '-01')
+filtered_data$Date <- as.Date(filtered_data$Date)
+head(filtered_data)
+```
+
+```{r}
+summary(filtered_data$mean_rate)
+```
+
+```{r}
+ggplot(filtered_data, aes(x = Date, y = mean_rate)) +
+  geom_line() +
+  labs(
+    title = "US Rate Over Time",
+    x = "Time", 
+    y = "US Rate"
+    )
+```
+
+```{r}
+gg <- ggplot(filtered_data, aes(x = Date, y = mean_rate))+
+  geom_line(aes(group = 1), color = "blue", linewidth = 0.5) +
+  geom_point() +
+  labs(
+    title = "US Rate",
+    x = "Time",
+    y = "Rate"
+  ) +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 year") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+plotly_gg <- ggplotly(gg)
+
+plotly_gg
+```
+```{r}
+str(euir_df)
+str(filtered_data)
+```
+
+```{r}
+merged_df <- merge(merge(euir_df, eucpi_df, by = "date"), filtered_data, by.x = "date", by.y = "Date")
+names(merged_df) <- c("date", "eu_ir", "eu_cpi", "us_rate")
+head(merged_df)
+tail(merged_df)
+```
+
+ARIMAX (US rate + EU interest rate)
+```{r}
+merged_df$date <- as.Date(merged_df$date)
+us_ts <- ts(merged_df$us_rate, frequency = 12, start = c(1999, 1))
+```
+
+```{r}
+# Split the data into train and test sets
+train_data <- window(us_ts, start = c(1999, 1), end = c(2022, 10))
+test_data <- window(us_ts, start = c(2022, 11))
+
+external_regressor <- merged_df$eu_ir[merged_df$date >= as.Date("1999-01-01") & merged_df$date <= as.Date("2022-10-01")]
+
+```
+
+```{r}
+fit <- Arima(train_data, order = c(1, 0, 1), xreg = external_regressor)
+
+forecast_values <- forecast(fit, xreg = merged_df$eu_ir[merged_df$date >= as.Date("2022-11-01")], h = 3)
+
+```
+
+
+```{r}
+predicted_values <- forecast_values$mean
+actual_values <- window(us_ts, start = c(2022, 11))
+```
+
+
+```{r}
+result_table <- tibble(
+  Date = time(actual_values),
+  Actual_Values = actual_values,
+  Predicted_Values = predicted_values
+)
+```
+
+```{r}
+plot(forecast_values, main = "ARIMAX Forecast for US Rate")
+lines(actual_values, col = "blue")
+legend("topleft", legend = c("Actual", "Forecast"), col = c("blue", "black"), lty = 1)
+
+```
+```{r}
+print(result_table)
+```
+ARIMAX (US rate + EU Consumer Price Index)
+```{r}
+# Split the data into train and test sets
+train_data <- window(us_ts, start = c(1999, 1), end = c(2022, 10))
+test_data <- window(us_ts, start = c(2022, 11))
+
+external_regressor <- merged_df$eu_cpi[merged_df$date >= as.Date("1999-01-01") & merged_df$date <= as.Date("2022-10-01")]
+```
+
+
+```{r}
+fit <- Arima(train_data, order = c(1, 0, 1), xreg = external_regressor)
+
+forecast_values <- forecast(fit, xreg = merged_df$eu_cpi[merged_df$date >= as.Date("2022-11-01")], h = 3)
+```
+
+
+```{r}
+predicted_values <- forecast_values$mean
+actual_values <- window(us_ts, start = c(2022, 11))
+```
+
+
+```{r}
+result_table <- tibble(
+  Date = time(actual_values),
+  Actual_Values = actual_values,
+  Predicted_Values = predicted_values
+)
+```
+
+
+```{r}
+plot(forecast_values, main = "ARIMAX Forecast for US Rate")
+lines(actual_values, col = "blue")
+legend("topleft", legend = c("Actual", "Forecast"), col = c("blue", "black"), lty = 1)
+
+```
+
+
+```{r}
+print(result_table)
+```
+
+
+```{r}
+```
+
