@@ -27,7 +27,6 @@ library(gam)
 
 
 ```{r}
-# folder_path = "~/Desktop/unipd/time-series/project/data/"
 folder_path = "./data/"
 
 # shares_file <- paste0(folder_path, "us-total-share-prices.csv")
