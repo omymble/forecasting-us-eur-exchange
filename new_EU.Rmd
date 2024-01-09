@@ -71,6 +71,20 @@ data_df <- data.frame(date = data$DATE, cpius = data$CPIUS, cpieu = data$CPIEU, 
 ```
 
 ```{r}
+stl_result <- stl(ts(data_df$ireu, frequency = 12), s.window = 44)
+plot(stl_result)
+
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+```{r}
 data_ts <- data_df %>%
   mutate(YearMonth = yearmonth(date)) %>%
   select(-date) |>
@@ -82,6 +96,166 @@ data_ts <- data_df %>%
 print(data_ts)
 ```
 
+IR: EU and US
+```{r}
+ir_eu_us_train <- train_data %>%
+  select(ireu, irus, YearMonth) %>%
+  as_tsibble()
+
+ir_eu_us_test <- test_data %>%
+  select(ireu, irus, YearMonth) %>%
+  as_tsibble()
+
+```
+
+
+```{r}
+ir_eu_us_train
+```
+```{r}
+ir_eu_us <- data_ts %>%
+  select(ireu, irus, YearMonth) %>%
+  as_tsibble()
+```
+
+
+```{r}
+ggplot(ir_eu_us, aes(x = YearMonth)) +
+  geom_line(aes(y = ireu, color = "Europe")) +
+  geom_line(aes(y = irus, color = "US")) +
+  labs(title = "Interest Rates in Europe and US over Time",
+       x = "Year-Month",
+       y = "Interest Rate",
+       color = "Country") +
+  scale_color_manual(values = c("Europe" = "blue", "US" = "red")) +
+  theme_minimal()
+
+```
+```{r}
+linear_corr <- cor(ir_eu_us$ireu, ir_eu_us$irus, method = "pearson")
+corr_test <- rcorr(as.matrix(ir_eu_us[c("ireu", "irus")]), type = "pearson")
+p_value <- corr_test$P[1, 2]
+
+cat("Linear Correlation:", linear_corr, "\n")
+cat("Significance (p-value):", p_value, "\n")
+```
+
+
+```{r}
+nonlinear_corr <- cor(ir_eu_us$ireu, ir_eu_us$irus, method = "spearman")
+nonlinear_corr_test <- rcorr(as.matrix(ir_eu_us[c("ireu", "irus")]), type = "spearman")
+nonlinear_p_value <- nonlinear_corr_test$P[1, 2]
+
+cat("Non-linear (Spearman) Correlation:", nonlinear_corr, "\n")
+cat("Significance (p-value):", nonlinear_p_value, "\n")
+```
+
+```{r}
+auto.arima(ir_eu_us$ireu)
+auto.arima(ir_eu_us$irus)
+```
+
+ARIMAX: IR AE and US
+```{r}
+ir_eu_us_train$YearMonth <- as.Date(paste(ir_eu_us_train$YearMonth, "01"), format = "%Y %b %d")
+ir_eu_us_test$YearMonth <- as.Date(paste(ir_eu_us_test$YearMonth, "01"), format = "%Y %b %d")
+```
+
+
+```{r}
+predictions <- list()
+order_params <- list()
+
+for (p in 1:3) {
+  for (d in 0:1) {
+    for (q in 1:3) {
+      arima_model <- Arima(ir_eu_us_train$ireu, order = c(p, d, q), xreg = ir_eu_us_train$irus)
+      order_params[[length(order_params) + 1]] <- c(p, d, q)
+      forecast_values <- forecast(arima_model, xreg = ir_eu_us_test$irus)
+      predictions[[length(predictions) + 1]] <- forecast_values$mean
+    }
+  }
+}
+
+```
+
+
+```{r}
+best_model_index <- which.min(sapply(predictions, function(pred) accuracy(pred, test_data$ireu)[, "RMSE"]))
+```
+
+
+```{r}
+best_model <- predictions[[best_model_index]]
+best_order <- order_params[[best_model_index]]
+```
+```{r}
+best_order
+```
+```{r}
+ir_eu_us_test$YearMonth
+```
+
+
+
+
+```{r}
+best_order <- c(3, 0, 2)  
+best_model <- Arima(ir_eu_us_train$ireu, order = best_order, xreg = ir_eu_us_train$irus)
+
+forecast_values <- forecast(best_model, xreg = test_data$irus)
+
+# Plotting the real values, fitted values, and predicted values
+plot(ir_eu_us$YearMonth, ir_eu_us$ireu, type = "l", col = "blue", 
+     xlab = "Year-Month", ylab = "ireu", main = "ARIMAX Prediction for ireu based on irus")
+lines(ir_eu_us_test$YearMonth, forecast_values$mean, col = "red") 
+lines(ir_eu_us_train$YearMonth, fitted(best_model), col = "green") 
+lines(ir_eu_us_test$YearMonth, ir_eu_us_test$ireu, col = "blue", lty = 2)  # Real test values
+
+legend("topleft", legend = c("Real", "Predicted", "Fitted"), col = c("blue", "red", "green"), lty = 1)
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+```{r}
+plot(test_data$YearMonth, ir_eu_us_test$ireu, type = "l", col = "blue", 
+     xlab = "Year-Month", ylab = "ireu", main = "ARIMAX Prediction for ireu based on irus")
+lines(ir_eu_us_test$YearMonth, best_model, col = "red")
+legend("topleft", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+```{r}
+forecast_values <- forecast(best_model, xreg = ir_eu_us_test$irus)
+
+```
+
+```{r}
+plot(ir_eu_us_test$YearMonth, ir_eu_us_test$ireu, type = "l", col = "blue", 
+     xlab = "Year-Month", ylab = "ireu", main = "ARIMAX Prediction for IR EU based on IR US")
+lines(ir_eu_us_test$YearMonth, best_model, col = "red")
+lines(ir_eu_us_test$YearMonth, best_model, col = "green")  # Fitted values
+legend("topleft", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
+```
+
+
+```{r}
+```
+
+------------------------------
 ```{r}
 clipr::write_clip(data_ts) 
 ```
@@ -188,6 +362,10 @@ autoplot(acf_values, xlab = "Lag", ylab = "ACF", main = "IR EU ACF")
 ggtsdisplay(data_ts$cpieu, lag = 48)
 ```
 
+```{r}
+stl_result <- stl(ts(data_ts$cpieu, frequency = 12), s.window = 44)
+plot(stl_result)
+```
 
 ```{r}
 ggtsdisplay(data_ts$ireu, lag = 48)
@@ -195,6 +373,8 @@ ggtsdisplay(data_ts$ireu, lag = 48)
 
 
 ```{r}
+stl_result <- stl(ts(data_ts$ireu, frequency = 12), s.window = 44)
+plot(stl_result)
 ```
 
 
