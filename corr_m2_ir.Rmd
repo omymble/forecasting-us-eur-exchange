@@ -1,0 +1,441 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(readxl)
+library(lmtest) 
+library(forecast)
+library(DIMORA)
+library(fpp2)
+library(ggplot2)
+library(plotly)
+library(tseries)
+library(randomForest)
+library(BASS)
+library(Metrics) 
+library(dplyr)
+library(tibble)
+library(TTR)
+library(gam)
+library(tsibble)
+library(fable)
+library(feasts)
+library(mgcv)
+library(xgboost)
+library(Hmisc)
+library(purrr)
+library(tidyr)
+library(glmnet)
+```
+
+```{r}
+folder_path = "./data/"
+
+data_file <- paste0(folder_path, "unscaled_m2.csv")
+
+data <- read.csv(data_file)
+```
+
+```{r}
+data$DATE <- as.Date(data$DATE)
+data_df <- data.frame(DATE = data$DATE, cpius = data$US_CPI, cpieu = data$EU_CPI, m2us = data$US_M2, m2eu = data$EU_M2, ireu = data$EU_IR, irus = data$US_IR, share = data$US_SHARE, min = data$dollar_min, max = data$dollar_max, median = data$dollar_median, dollar = data$dollar, month = data$MONTH)
+```
+
+## Function for acf
+```{r}
+ggAcfConditional <- function(data, color_above_threshold = "#aa6060", color_below_threshold="#79a3a0", lag=25, filename="test") {
+  acf_result <- acf(data, plot = FALSE, lag.max =lag )
+  df_acf <- data.frame(lag = acf_result$lag, acf = acf_result$acf)
+  
+  # Determine the threshold as the 95% confidence interval
+  threshold <- qnorm(0.975) / sqrt(length(data))
+  
+  # Add a new column indicating whether the absolute ACF value exceeds the threshold
+  df_acf$color <- ifelse(abs(df_acf$acf) > threshold, color_above_threshold, color_below_threshold)
+  
+   ggplot(df_acf, aes(x = lag, y = acf, fill = color)) +
+    geom_bar(stat = "identity", width = 0.2) +
+    geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed", color = "blue", size = 0.2) +
+    annotate("text", x = 0, y = 0, label = "White Noise Region", color = "black", hjust = 0) +
+    geom_text(data = subset(df_acf, abs(acf) > threshold), aes(label = lag), vjust = -0.5, color = "black",size=0.4) +
+    labs(x = "Lag",
+         y = "Autocorrelation",
+         title = "") +
+    scale_fill_manual(values = c(color_below_threshold,color_above_threshold)) +
+    theme(legend.position = "none",  # Remove legend
+          panel.background = element_blank(),  # Remove panel background
+          plot.background = element_blank())   
+  ggsave(
+      paste0(filename, "_acf.png"),
+      width = 1780,
+      height = 500,
+      units = "px"
+    )
+}
+```
+
+
+## Function for plot
+```{r}
+plot_combined_data <- function(data, col, model) {
+
+  gg_plot_combined <- ggplot(data, aes(x = DATE, color = Set)) +
+    geom_line(aes(y = actual, linetype = "Actual"), size = 0.5, color = "#aa6060") +
+    geom_line(aes(y = predict, linetype = "Predictions"), size = 0.5) +
+    labs(
+      title = "",
+      x = "Date",
+      y = col,
+      color = "Set",
+      linetype = "Linetype"
+    ) +
+    scale_color_manual(values = c("fitted" = "#79a3a0", "forecasted" = "blue")) +
+    scale_linetype_manual(values = c("Predictions" = "solid", "Actual" = "dashed")) +
+    theme_minimal() +
+    theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+
+  # Print the combined plot
+  print(gg_plot_combined)
+
+  # Save the combined plot
+  ggsave(
+    paste0(col, "_",model, "_predict.png"),
+    plot = gg_plot_combined,
+    width = 1426,
+    height = 950,
+    units = "px"
+  )
+
+  residuals_plot <- ggplot(data, aes(x = DATE, y = predict - actual, color = Set)) +
+    geom_line(size = 1) +
+    labs(
+      title = "",
+      x = "Date",
+      y = "Residuals",
+      color = "Set"
+    ) +
+    scale_color_manual(values = c("fitted" = "#79a3a0", "forecasted" = "#aa6060")) +
+    theme_minimal()
+
+  # Print the residuals plot
+  print(residuals_plot)
+
+  # Save the residuals plot
+  ggsave(
+    paste0(col, "_", model, "_residuals.png"),
+    plot = residuals_plot,
+    width = 1700,
+    height = 500,
+    units = "px"
+  )
+
+  # Assuming ggAcfConditional is a custom function
+  # Make sure it is defined and properly used
+  ggAcfConditional(data$predict - data$actual, lag = 25, filename = paste0(col, "_",model))
+}
+```
+
+```{r}
+stl_result <- stl(ts(data_df$ireu, frequency = 12), s.window = 44)
+plot(stl_result)
+```
+
+
+## IR: EU and US
+
+```{r}
+euusir_df = data.frame(data_df[, c(1, 6, 7)])
+euusir_df$DATE <- as.Date(euusir_df$DATE)
+```
+
+### train test split
+```{r}
+last_date <- tail(euusir_df$DATE, 1)
+start_test_date <- as.Date(cut(last_date, "month")) - months(2)
+
+euusir_train <- subset(euusir_df, DATE < start_test_date)
+euusir_test <- subset(euusir_df, DATE >= start_test_date)
+```
+
+```{r}
+dim(euusir_train)
+dim(euusir_test)
+summary(euusir_train)
+```
+
+
+```{r}
+gg <- ggplot(euusir_df, aes(x = DATE))+
+  geom_line(aes(y = ireu), color = "blue", size = 0.5, linetype = "solid") +
+  geom_line(aes(y = irus), color = "gold", size = 0.5, linetype = "solid") +
+  theme_minimal()+
+  labs(
+    y = "IR",
+    x = "Time"
+  ) +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 year") +
+  theme(
+    panel.background = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )
+
+euusir_gg <- ggplotly(gg)
+euusir_gg
+ggsave("euusir.png", plot = gg, device = "png", width = 7, height = 4)
+```
+
+
+```{r}
+linear_corr <- cor(euusir_df$ireu, euusir_df$irus, method = "pearson")
+corr_test <- rcorr(as.matrix(euusir_df[c("ireu", "irus")]), type = "pearson")
+p_value <- corr_test$P[1, 2]
+
+cat("Linear Correlation:", linear_corr, "\n")
+cat("Significance (p-value):", p_value, "\n")
+```
+
+
+```{r}
+nonlinear_corr <- cor(euusir_df$ireu, euusir_df$irus, method = "spearman")
+nonlinear_corr_test <- rcorr(as.matrix(euusir_df[c("ireu", "irus")]), type = "spearman")
+nonlinear_p_value <- nonlinear_corr_test$P[1, 2]
+
+cat("Non-linear (Spearman) Correlation:", nonlinear_corr, "\n")
+cat("Significance (p-value):", nonlinear_p_value, "\n")
+```
+
+```{r}
+auto.arima(euusir_df$ireu)
+auto.arima(euusir_df$irus)
+```
+
+## ARIMAX: IR EU and US
+```{r}
+predictions <- list()
+order_params <- list()
+
+for (p in 0:2) {
+  for (d in 0:2) {
+    for (q in 0:2) {
+      arima_model <- Arima(euusir_train$ireu, order = c(p, d, q), xreg = euusir_train$irus)
+      order_params[[length(order_params) + 1]] <- c(p, d, q)
+      forecast_values <- forecast(arima_model, xreg = euusir_test$irus)
+      predictions[[length(predictions) + 1]] <- forecast_values$mean
+    }
+  }
+}
+```
+
+```{r}
+forecast_values
+```
+
+```{r}
+best_model_index <- which.min(sapply(predictions, function(pred) accuracy(pred, euusir_test$ireu)[, "RMSE"]))
+```
+
+
+```{r}
+best_model <- predictions[[best_model_index]]
+best_order <- order_params[[best_model_index]]
+```
+```{r}
+best_order
+```
+```{r}
+best_model
+```
+
+```{r}
+best_model <- Arima(euusir_train$ireu, order = best_order, xreg = euusir_train$irus)
+forecast_values <- forecast(best_model, xreg = euusir_test$irus)
+```
+```{r}
+best_model
+```
+
+
+```{r}
+euusir_df$fitted_forecasted <- NA 
+
+euusir_df$fitted_forecasted[1:286] <- fitted(best_model)
+euusir_df$fitted_forecasted[(nrow(euusir_df) - 2):nrow(euusir_df)] <- forecast_values$mean
+```
+
+```{r}
+euusir_df$type <- ifelse(row_number(euusir_df$DATE) <= 286, "fitted", "forecasted")
+```
+
+```{r}
+names(euusir_df) <- c("DATE", "actual", "irus", "predict", "Set")
+```
+
+```{r}
+plot_combined_data(data=euusir_df
+                   ,col = "EU_US_IR"
+                   ,model = "arimax")
+```
+
+
+## -----------
+
+## M2: EU and US
+
+
+```{r}
+euusm2_df = data.frame(data_df[, c(1, 4, 5)])
+euusm2_df$DATE <- as.Date(euusm2_df$DATE)
+```
+
+```{r}
+head(euusm2_df)
+```
+### train test split
+```{r}
+last_date <- tail(euusm2_df$DATE, 1)
+start_test_date <- as.Date(cut(last_date, "month")) - months(2)
+
+euusm2_train <- subset(euusm2_df, DATE < start_test_date)
+euusm2_test <- subset(euusm2_df, DATE >= start_test_date)
+```
+
+```{r}
+dim(euusm2_train)
+dim(euusm2_test)
+summary(euusm2_train)
+```
+
+
+```{r}
+gg <- ggplot(euusm2_df, aes(x = DATE))+
+  geom_line(aes(y = m2eu), color = "blue", size = 0.5, linetype = "solid") +
+  geom_line(aes(y = m2us), color = "gold", size = 0.5, linetype = "solid") +
+  theme_minimal()+
+  labs(
+    y = "M2",
+    x = "Time"
+  ) +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 year") +
+  theme(
+    panel.background = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )
+
+euusir_gg <- ggplotly(gg)
+euusir_gg
+ggsave("euusm2.png", plot = gg, device = "png", width = 7, height = 4)
+```
+
+```{r}
+linear_corr <- cor(euusm2_df$m2eu, euusm2_df$m2us, method = "pearson")
+corr_test <- rcorr(as.matrix(euusm2_df[c("m2eu", "m2us")]), type = "pearson")
+p_value <- corr_test$P[1, 2]
+
+cat("Linear Correlation:", linear_corr, "\n")
+cat("Significance (p-value):", p_value, "\n")
+```
+
+
+```{r}
+nonlinear_corr <- cor(euusm2_df$m2eu, euusm2_df$m2us, method = "spearman")
+nonlinear_corr_test <- rcorr(as.matrix(euusm2_df[c("m2eu", "m2us")]), type = "spearman")
+nonlinear_p_value <- nonlinear_corr_test$P[1, 2]
+
+cat("Non-linear (Spearman) Correlation:", nonlinear_corr, "\n")
+cat("Significance (p-value):", nonlinear_p_value, "\n")
+```
+
+```{r}
+auto.arima(euusm2_df$m2eu)
+auto.arima(euusm2_df$m2us)
+```
+```{r}
+diff_m2eu <- diff(euusm2_train$m2eu)
+diff_m2us <- diff(euusm2_train$m2us)
+```
+
+```{r}
+diff_df <- data.frame(DATE = euusm2_train$DATE[-1], 
+                      diff_m2eu = diff_m2eu,
+                      diff_m2us = diff_m2us)
+```
+
+
+```{r}
+head(diff_df)
+```
+
+
+```{r}
+diff_m2eu_test <- diff(euusm2_test$m2eu)
+diff_m2us_test <- diff(euusm2_test$m2us)
+
+diff_test_df <- data.frame(DATE = euusm2_test$DATE[-1], 
+                           diff_m2eu = diff_m2eu_test,
+                           diff_m2us = diff_m2us_test)
+
+head(diff_test_df)
+```
+
+### DIFF M2
+```{r}
+
+predictions <- list()
+order_params <- list()
+
+for (p in 0:2) {
+  for (d in 0:2) {
+    for (q in 0:2) {
+      diff_m2eu_train <- diff(euusm2_train$m2eu)
+      diff_m2us_train <- diff(euusm2_train$m2us)
+      
+      arima_model <- Arima(diff_m2eu_train, order = c(p, d, q), xreg = diff_m2us_train)
+      order_params[[length(order_params) + 1]] <- c(p, d, q)
+      
+      diff_m2eu_test <- diff(euusm2_test$m2eu)
+      diff_m2us_test <- diff(euusm2_test$m2us)
+      
+      forecast_values <- forecast(arima_model, xreg = diff_m2us_test)
+      predictions[[length(predictions) + 1]] <- forecast_values$mean
+    }
+  }
+}
+
+best_model_index <- which.min(sapply(predictions, function(pred) accuracy(pred, diff_m2eu_test)[, "RMSE"]))
+best_model <- predictions[[best_model_index]]
+best_order <- order_params[[best_model_index]]
+
+best_arimax_model <- Arima(euusm2_train$m2eu, order = best_order, xreg = euusm2_train$m2us)
+
+final_forecast <- forecast(best_arimax_model, xreg = euusm2_test$m2us)
+```
+```{r}
+best_arimax_model
+```
+
+
+```{r}
+euusm2_df$fitted_forecasted <- NA 
+
+euusm2_df$fitted_forecasted[1:286] <- fitted(best_arimax_model)
+euusm2_df$fitted_forecasted[(nrow(euusm2_df) - 2):nrow(euusm2_df)] <- final_forecast$mean
+```
+
+```{r}
+euusm2_df$type <- ifelse(row_number(euusm2_df$DATE) <= 286, "fitted", "forecasted")
+```
+```{r}
+names(euusm2_df)
+```
+
+```{r}
+names(euusm2_df) <- c("DATE", "m2us", "actual", "predict", "Set")
+```
+
+```{r}
+plot_combined_data(data=euusm2_df
+                   ,col = "EU_US_M2"
+                   ,model = "arimax")
+```
